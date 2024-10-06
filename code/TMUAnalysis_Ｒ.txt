@@ -1,0 +1,100 @@
+library(ggplot2)
+library(dplyr)
+setwd("C:/Users/Po-Chun Chiu/Desktop/datathone")
+#tmu <- read.csv("TMU.csv")
+#CCI <- read.csv("TMU_PH_CCI.csv")
+#merged_data <- inner_join(CCI, tmu, by = "CHR_NO")
+#merged_data[which(merged_data$CHR_NO == "9B640BB0F12164A96E589C54A7133D762581B533601A20FC33E6F27137AEE94C19144BFB587DA682798474851C59A1230D81A81A612EF877DB2208B213ED9873B0D6508D2FC365F2AEE90C745C82F281"),]
+#merged_data <- merged_data %>%
+  #filter(!(CHR_NO == "9B640BB0F12164A96E589C54A7133D762581B533601A20FC33E6F27137AEE94C19144BFB587DA682798474851C59A1230D81A81A612EF877DB2208B213ED9873B0D6508D2FC365F2AEE90C745C82F281" &
+             #HOSPIN_DATE == "1080309" &
+             #PANC_IN_DAY == "2018/11/9"))
+#merged_data <- merged_data %>%
+  #filter(!(CHR_NO == "9B640BB0F12164A96E589C54A7133D762581B533601A20FC33E6F27137AEE94C19144BFB587DA682798474851C59A1230D81A81A612EF877DB2208B213ED9873B0D6508D2FC365F2AEE90C745C82F281" &
+            # HOSPIN_DATE == "1071109" &
+             #PANC_IN_DAY == "2019/3/9"))
+#tmu <- merged_data
+#write.csv(tmu, "tmu_merge.csv")
+
+tmu <- read.csv("tmu_merge.csv")
+str(tmu)
+dim(tmu)
+tmu$WBC <- gsub(" 10\\^3/uL", "", tmu$WBC)
+tmu$HCT <- gsub("%", "", tmu$HCT)
+tmu$BUN <- gsub(" mg/dL", "", tmu$BUN)
+tmu$Cr <- gsub(" mg/dL", "", tmu$Cr)
+tmu$GLUCOSE <- gsub(" mg/dL", "", tmu$GLUCOSE)
+tmu$Ca <- gsub(" mg/dL", "", tmu$Ca)
+tmu$AST<- gsub(" IU/L", "", tmu$AST)
+tmu$ALT<- gsub(" IU/L", "", tmu$ALT)
+tmu$CRP<- gsub(" mg/dL", "", tmu$CRP)
+tmu$AMYLASE<- gsub(" U/L", "", tmu$AMYLASE)
+tmu$LIPASE<- gsub(" U/L", "", tmu$LIPASE)
+tmu <- subset(tmu, select = -c(ICU_DATE, IPD_DATE, IPD_TIME, CPD_DATE, CPD_TIME))
+tmu[tmu == "NULL"] <- NA
+tmu$within_48_hours <- ifelse(is.na(tmu$within_48_hours), 0, 1)
+missing_proportion <- colSums(is.na(tmu)) / nrow(tmu)
+print(missing_proportion)
+missing_df <- data.frame(column = names(missing_proportion), proportion = missing_proportion)
+
+ggplot(missing_df, aes(x = column, y = proportion)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Proportion of Missing Data in Each Column", x = "Columns", y = "Proportion of Missing Values") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+library(tidyr)
+tmu$CCI <- ifelse(tmu$CCI >= 2, 1, 0)
+write.csv(tmu, "tmu_missing.csv")
+library(lubridate)
+tmu$PANC_IN_DAY <- ymd(tmu$PANC_IN_DAY)
+tmu$BIRTH_DATE <- ymd(paste0(as.integer(substr(tmu$BIRTH_DATE, 1, 2)) + 1911,
+                            substr(tmu$BIRTH_DATE, 3, 4),
+                            substr(tmu$BIRTH_DATE, 5, 6)))
+
+tmu$AGE <- as.period(interval(tmu$BIRTH_DATE, tmu$PANC_IN_DAY))$year
+summary(tmu$AGE)
+median(tmu$AGE)
+IQR(tmu$AGE)
+quantile(tmu$AGE, 0.25)
+quantile(tmu$AGE, 0.75)
+print(df)
+tmu2 <- tmu
+tmu2[, 19:31] <- lapply(tmu2[, 19:31], as.numeric)
+tmu2$WBC <- ifelse(is.na(tmu2$WBC), mean(tmu2$WBC, na.rm = TRUE), tmu2$WBC)
+tmu2$HCT <- ifelse(is.na(tmu2$HCT), mean(tmu2$HCT, na.rm = TRUE), tmu2$HCT)
+tmu2$BUN <- ifelse(is.na(tmu2$BUN), mean(tmu2$BUN, na.rm = TRUE), tmu2$BUN)
+tmu2$Cr <- ifelse(is.na(tmu2$Cr), mean(tmu2$Cr, na.rm = TRUE), tmu2$Cr)
+tmu2$LDH <- ifelse(is.na(tmu2$LDH), mean(tmu2$LDH, na.rm = TRUE), tmu2$LDH)
+tmu2$GLUCOSE <- ifelse(is.na(tmu2$GLUCOSE), mean(tmu2$GLUCOSE, na.rm = TRUE), tmu2$GLUCOSE)
+tmu2$Ca <- ifelse(is.na(tmu2$Ca), mean(tmu2$Ca, na.rm = TRUE), tmu2$Ca)
+tmu2$AST <- ifelse(is.na(tmu2$AST), mean(tmu2$AST, na.rm = TRUE), tmu2$AST)
+tmu2$ALT <- ifelse(is.na(tmu2$ALT), mean(tmu2$ALT, na.rm = TRUE), tmu2$ALT)
+tmu2$CRP <- ifelse(is.na(tmu2$CRP), mean(tmu2$CRP, na.rm = TRUE), tmu2$CRP)
+tmu2$AMYLASE <- ifelse(is.na(tmu2$AMYLASE), mean(tmu2$AMYLASE, na.rm = TRUE), tmu2$AMYLASE)
+tmu2$LIPASE <- ifelse(is.na(tmu2$LIPASE), mean(tmu2$LIPASE, na.rm = TRUE), tmu2$LIPASE)
+tmu2$HCO3 <- ifelse(is.na(tmu2$HCO3), mean(tmu2$HCO3, na.rm = TRUE), tmu2$HCO3)
+tmu2$CCI <- ifelse(tmu2$CCI >= 2, 1, 0)
+tmu2$AGE
+str(tmu2)
+tmu_analysis <- tmu2[c("CCI", "SEX_TYPE", "WBC", "HCT", "BUN", "Cr", "GLUCOSE", "Ca", "AST", "ALT", "CRP", "AMYLASE", "LIPASE", "SPO2", "BODY_TEMP", "within_48_hours", "AGE")]
+logistic_model <- glm(tmu_analysis$within_48_hours ~ CCI + SEX_TYPE + WBC + HCT + BUN + Cr + GLUCOSE + Ca + AST + ALT + CRP + AMYLASE + LIPASE + SPO2 + BODY_TEMP + MEAN_PRESSURE, data = tmu_analysis, family = "binomial")
+table(tmu_analysis$within_48_hours, tmu_analysis[,18])
+logistic_model <- glm(tmu_analysis$within_48_hours ~ CCI + SEX_TYPE+ WBC + HCT + BUN + Cr + GLUCOSE + Ca + AST + ALT + CRP + AMYLASE
+                      + LIPASE + SPO2 + BODY_TEMP, data = tmu_analysis, family = "binomial")
+summary(logistic_model)
+logistic_model <- glm(tmu_analysis$within_48_hours ~ CCI + SEX_TYPE + Ca + AGE, data = tmu_analysis, family = "binomial")
+summary(logistic_model)
+#
+library(Matrix)
+library(glmnet)
+
+#
+full_model <- glm(within_48_hours ~ ., data = tmu_analysis, family = "binomial")
+stepwise_model <- step(full_model, direction = "both")
+summary(stepwise_model)
+exp(13.896296)
+exp(0.050836)
+exp(-0.985688)
+exp(-0.008515)
+exp(-1.502473)
+exp(-0.007226)
+table(tmu_analysis$within_48_hours)

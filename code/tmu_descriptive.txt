@@ -1,0 +1,86 @@
+library(ggplot2)
+
+tmu <- read.csv("tmu_merge.csv")
+dim(tmu)
+str(tmu)
+
+tmu$WBC <- gsub(" 10\\^3/uL", "", tmu$WBC)
+tmu$HCT <- gsub("%", "", tmu$HCT)
+tmu$BUN <- gsub(" mg/dL", "", tmu$BUN)
+tmu$Cr <- gsub(" mg/dL", "", tmu$Cr)
+tmu$GLUCOSE <- gsub(" mg/dL", "", tmu$GLUCOSE)
+tmu$Ca <- gsub(" mg/dL", "", tmu$Ca)
+tmu$AST<- gsub(" IU/L", "", tmu$AST)
+tmu$ALT<- gsub(" IU/L", "", tmu$ALT)
+tmu$CRP<- gsub(" mg/dL", "", tmu$CRP)
+tmu$AMYLASE<- gsub(" U/L", "", tmu$AMYLASE)
+tmu$LIPASE<- gsub(" U/L", "", tmu$LIPASE)
+
+
+# 計算每個欄位缺失值的比例
+tmu[tmu == "NULL"] <- NA
+missing_proportion <- colSums(is.na(tmu)) / nrow(tmu)
+# 顯示每個欄位缺失值的比例
+print(missing_proportion)
+# 將缺失值比例轉換為數據框以便 ggplot2 繪圖
+missing_df <- data.frame(column = names(missing_proportion), proportion = missing_proportion)
+
+# 使用 ggplot2 繪製柱狀圖
+ggplot(missing_df, aes(x = column, y = proportion)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Proportion of Missing Data in Each Column", x = "Columns", y = "Proportion of Missing Values") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#age
+
+# 確保 HOSPIN_DATE 和 BIRTH_DATE 是字符類型
+tmu$BIRTH_DATE <- as.character(tmu$BIRTH_DATE)
+tmu$HOSPIN_DATE <- as.character(tmu$HOSPIN_DATE)
+# 定義一個函數來將民國紀年轉換為西元紀年
+convert_to_western_date <- function(date_string) {
+  # 分割日期成年、月、日
+  date_parts <- strsplit(date_string, "-")[[1]]
+  # 將民國年份轉換為西元年份（+1911）
+  western_year <- as.numeric(date_parts[1]) + 1911
+  # 組合成西元日期格式的字串
+  western_date <- paste(western_year, date_parts[2], date_parts[3], sep = "-")
+  # 返回日期類型
+  return(as.Date(western_date, format = "%Y-%m-%d"))
+}
+
+# 將 HOSPIN_DATE 和 BIRTH_DATE 轉換為西元日期
+tmu$HOSPIN_DATE_WESTERN <- sapply(tmu$HOSPIN_DATE, convert_to_western_date)
+tmu$BIRTH_DATE_WESTERN <- sapply(tmu$BIRTH_DATE, convert_to_western_date)
+# 計算年齡
+tmu$AGE <- as.numeric(difftime(tmu$HOSPIN_DATE_WESTERN, tmu$BIRTH_DATE_WESTERN, units = "weeks")) / 52.25
+
+
+#性別
+table(tmu$SEX_TYPE) #0是女生 33%, 1是男生 67%
+#數值型
+missing_proportion
+
+median(as.numeric(tmu$LIPASE), na.rm = TRUE)
+IQR(as.numeric(tmu$LIPASE), na.rm = TRUE)
+median(as.numeric(tmu$AMYLASE), na.rm = TRUE)
+IQR(as.numeric(tmu$AMYLASE), na.rm = TRUE)
+median(as.numeric(tmu$WBC), na.rm = TRUE)
+IQR(as.numeric(tmu$WBC), na.rm = TRUE)
+median(as.numeric(tmu$GLUCOSE), na.rm = TRUE)
+IQR(as.numeric(tmu$GLUCOSE), na.rm = TRUE)
+median(as.numeric(tmu$LDH), na.rm = TRUE)
+IQR(as.numeric(tmu$LDH), na.rm = TRUE)
+median(as.numeric(tmu$AST), na.rm = TRUE)
+IQR(as.numeric(tmu$AST), na.rm = TRUE)
+median(as.numeric(tmu$HCT), na.rm = TRUE)
+IQR(as.numeric(tmu$HCT), na.rm = TRUE)
+median(as.numeric(tmu$Ca), na.rm = TRUE)
+IQR(as.numeric(tmu$Ca), na.rm = TRUE)
+median(as.numeric(tmu$BUN), na.rm = TRUE)
+IQR(as.numeric(tmu$BUN), na.rm = TRUE)
+
+
+
+
+
+
