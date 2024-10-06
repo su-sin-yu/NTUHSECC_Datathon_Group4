@@ -1,0 +1,136 @@
+import pandas as pd # type: ignore
+
+# 讀取 CSV 檔案
+df = pd.read_csv('/Users/anya/Documents/Python/Data-analysis/datathon/mimic_sleep.csv')
+print(df.head())  # 檢視前五列資料
+
+
+# 計算不同形式的缺失值比例（NaN、'NULL'、空字串）
+variables = ['lipase_mean', 'amylase_mean', 'wbc_mean', 'glucose_mean', 'ldh_mean', 'ast_mean', 'hematocrit_mean', 'calcium_mean', 'bun_mean']
+
+missing_ratios = {}
+
+# 在補值前計算缺失值比例
+for var in variables:
+    total_missing = df[var].isnull().sum() + (df[var] == 'NULL').sum() + (df[var] == '').sum()
+    missing_ratio = (total_missing / len(df)) * 100
+    missing_ratios[var] = missing_ratio
+
+# 顯示缺失值比例
+missing_ratios_df = pd.DataFrame(missing_ratios, index=['Missing Ratio (%)']).T
+print("\nMissing Ratios (before filling missing values):")
+print(missing_ratios_df)
+
+
+# 檢查是否存在 blood_pressure 欄位並刪除
+if 'blood_pressure' in df.columns:
+    df = df.drop(columns=['blood_pressure'])
+print(df.head())
+
+# 新增一個欄位 'emergency_coding'
+# 如果 'hours_to_icu' 有數值則為 1，否則為 0
+df['icu_coding'] = df['hours_to_icu'].apply(lambda x: 1 if pd.notna(x) else 0)
+
+# 計算 'age' 欄位的平均值
+age_mean = df['age'].mean()
+
+# 顯示 'age' 欄位的平均值
+print(f"The average age is: {age_mean}")
+
+
+# 檢視前幾列資料，確認結果
+print(df[['hours_to_icu', 'icu_coding']].head())
+
+# 計算每個欄位中缺失值的比例
+missing_ratio = df.isnull().mean() * 100
+
+# 計算每個欄位中標記為 'UNKNOWN' 的比例
+unknown_ratio = (df == 'UNKNOWN').mean() * 100
+
+# 將缺失值比例和 'UNKNOWN' 比例新增為 DataFrame 的兩個 row
+df.loc['missing_ratio'] = missing_ratio
+df.loc['unknown_ratio'] = unknown_ratio
+
+# 組合成一個資料框以便查看結果
+missing_and_unknown = pd.DataFrame({
+    'Missing Ratio (%)': missing_ratio,
+    'Unknown Ratio (%)': unknown_ratio
+})
+
+# 顯示前幾列結果
+print(missing_and_unknown.head())
+
+# 指定不進行填補的欄位
+columns_to_exclude = ['hours_to_icu', 'edregtime', 'icu_intime']
+
+# 針對每個欄位進行操作
+for column in df.columns:
+    # 如果該欄位不在排除清單內，且數值是數字類型（排除非數字欄位）
+    if column not in columns_to_exclude and pd.api.types.is_numeric_dtype(df[column]):
+        # 用該欄位的平均值來填補 NaN
+        df[column].fillna(df[column].mean(), inplace=True)
+
+# 針對類別型欄位（包括字串型和物件型），將 NaN 補上 'UNKNOWN'
+for column in df.columns:
+    if column not in columns_to_exclude and (pd.api.types.is_string_dtype(df[column]) or pd.api.types.is_object_dtype(df[column])):
+        # 用 'UNKNOWN' 填補 NaN
+        df[column].fillna('UNKNOWN', inplace=True)
+
+
+# 檢視前幾列資料，確認結果
+print(df.head())
+
+
+# 計算 'age' 欄位的統計數據：median, mean, IQR
+age_median = df['age'].median()
+age_mean = df['age'].mean()
+age_iqr = df['age'].quantile(0.75) - df['age'].quantile(0.25)
+
+# 計算 'gender' 欄位中 M 的比例
+gender_m_ratio = (df['gender'] == 'M').mean() * 100
+
+# 計算 'race' 欄位中出現最多的項目的比例
+most_common_race = df['race'].value_counts(normalize=True).idxmax()
+most_common_race_ratio = df['race'].value_counts(normalize=True).max() * 100
+
+# 計算 'language' 欄位中出現最多的項目的比例
+most_common_language = df['language'].value_counts(normalize=True).idxmax()
+most_common_language_ratio = df['language'].value_counts(normalize=True).max() * 100
+
+# 顯示結果
+print(f"Age Median: {age_median}")
+print(f"Age Mean: {age_mean}")
+print(f"Age IQR: {age_iqr}")
+print(f"Gender M Ratio: {gender_m_ratio}%")
+print(f"Most Common Race: {most_common_race}, Ratio: {most_common_race_ratio}%")
+print(f"Most Common Language: {most_common_language}, Ratio: {most_common_language_ratio}%")
+# 計算 'age' 欄位的 Q1 和 Q3
+age_q1 = df['age'].quantile(0.25)
+age_q3 = df['age'].quantile(0.75)
+
+# 顯示 Q1 和 Q3
+print(f"Age Q1 (25th percentile): {age_q1}")
+print(f"Age Q3 (75th percentile): {age_q3}")
+
+
+# 指定要計算的變數
+variables = ['lipase_mean', 'amylase_mean', 'wbc_mean', 'glucose_mean', 'ldh_mean', 'ast_mean', 'hematocrit_mean', 'calcium_mean', 'bun_mean']
+
+# 初始化結果字典
+stats = {}
+
+for var in variables:
+    # 去掉缺失值後計算 median 和 IQR
+    median = df[var].median(skipna=True)
+    iqr = df[var].quantile(0.75) - df[var].quantile(0.25)
+    
+    # 存入結果字典
+    stats[var] = {
+        'median': median,
+        'IQR': iqr
+    }
+
+# 將結果轉為 DataFrame 並顯示
+stats_df = pd.DataFrame(stats).T
+print("Median and IQR (excluding missing values):")
+print(stats_df)

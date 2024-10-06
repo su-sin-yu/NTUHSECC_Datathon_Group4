@@ -1,0 +1,136 @@
+import seaborn as sns
+from pathlib import Path
+import matplotlib.pyplot as plt
+import pandas as pd
+from statannotations.Annotator import Annotator
+
+def box():
+    data = pd.read_csv(Path(r'C:\Users\Chi\Downloads\mimic_sleep.csv'))
+    # print(data['wbc_mean'].isna(), data['wbc_mean'])
+    key = 'amylase'
+    data[f'mean of {key} is N/A'] = data[f'{key}_mean'].isna()
+    new_df_1 = pd.DataFrame({
+        'value' : data['race'],
+        'attribute' : 'race'
+    })
+
+    new_df_2 = pd.DataFrame({
+        'value' : data['language'],
+        'attribute' : 'language'
+    })
+
+
+
+    na_df = pd.concat([data[f'mean of {key} is N/A'],data[f'mean of {key} is N/A']],ignore_index= True)
+    na_df = pd.concat([na_df, data[f'mean of {key} is N/A']], ignore_index= True)
+    # print(na_df)
+    new_data = pd.concat([new_df_1, new_df_2], ignore_index=  True)
+    new_data[f'mean of {key} is N/A'] = na_df
+    # print(new_data)
+    print(data[f'mean of {key} is N/A'])
+    new_df_1 = pd.concat([new_df_1, data[f'mean of {key} is N/A']], ignore_index = True, axis = 1)
+    new_df_1.columns = ['attribute', 'value', f'mean of {key} is N/A']
+
+    print(new_df_1)
+    new_data['mean of wbc is N/A'] = data['wbc_mean'].isna()
+    new_data['mean of wbc is N/A'] = pd.concat([new_data['mean of wbc is N/A'],new_data['mean of wbc is N/A']], ignore_index= True )
+    # print(new_data[-20:-10])
+    ax = sns.barplot(new_df_1, x = 'attribute', y = 'value', hue = f'mean of {key} is N/A')
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    pairs = [(('age', True),('age', False)),
+            (('BMI', True),('BMI', False))]
+    # print(new_data[f'mean of {key} is N/A'])
+    # annotator = Annotator(ax, pairs, data=new_data, x='attribute', y='value', hue = 'mean of glucose is N/A')
+    # annotator.configure(test='Mann-Whitney', text_format='star', loc='inside')
+    # annotator.apply_and_annotate()
+    plt.savefig(Path(r'C:\Users\Chi\Downloads\amylase.svg'),  bbox_inches = 'tight')
+    plt.show()
+
+
+def bar_plot():
+    data = pd.read_csv(Path(r'C:\Users\Chi\Downloads\mimic_sleep.csv'))
+
+    data['Language'] = data['language'].apply(lambda x: 'English' if x =='English' else 'Others')
+    
+    data['Race'] = data['race'].apply(lambda x: 'white' if x == 'WHITE' 
+                                            else ('black/African American' if x == 'BLACK/AFRICAN AMERICAN' else 'Others'))
+    key = 'wbc'
+    data[f'mean of {key} is N/A'] = data[f'{key}_mean'].isna()
+    language_number = data.groupby([f'mean of {key} is N/A', 'Language']).size().reset_index(name = 'counts')
+    race_number = data.groupby([f'mean of {key} is N/A', 'Race']).size().reset_index(name = 'counts')
+    gender_number = data.groupby([f'mean of {key} is N/A', 'gender']).size().reset_index(name = 'counts')
+    # print(data['race_group'])
+    print(language_number)
+    print(race_number)
+    print(gender_number)
+
+    df = pd.concat([language_number, race_number, gender_number], ignore_index= True)
+    df.to_csv(Path(r'C:\Users\Chi\Downloads\category_wbc.csv'))
+
+
+def bar_plot_1():
+    data = pd.read_csv(Path(r'C:\Users\Chi\Downloads\category_lipase.csv'))
+    key = 'lipase'
+    label_font  = {'family':'arial','color':'black','size':15, 'weight':'bold'}
+    fig, ax = plt.subplots(figsize = (10,15))
+    sns.barplot(data, x= 'category', y = 'counts', hue= f'mean of {key} is N/A' )
+    plt.xticks(rotation = 45, fontsize= 10)
+    # plt.xlabel(fontdict= label_font)
+    plt.ylabel('Ratio', fontsize= 10)
+    plt.savefig(Path(r'C:\Users\Chi\Downloads\lipase_bar.svg', bbox_inches = 'tight'))
+    plt.show()
+
+
+def bar_plot_tmu():
+    datapath = Path(r'C:\Users\Chi\Downloads')
+    data = pd.read_csv(datapath /'tmu_missing.csv')
+    key_list = ['WBC', 'HCT', 'BUN', 'Cr', 'GLUCOSE', 'Ca', 'AST', 'ALT', 'CRP', 'AMYLASE', 'LIPASE']
+
+    data['SEX_TYPE'] = data['SEX_TYPE'].apply(lambda x: 'F' if x == 0  else 'M')
+    data['CCI'] = data['CCI'].apply(lambda x: 'CCI >= 2' if x == 1 else 'CCI < 2')
+
+    for key in key_list:
+        data[f'{key} is N/A'] = data[f'{key}'].isna()
+        
+        sex_number = data.groupby([f'{key} is N/A', 'SEX_TYPE']).size().reset_index(name = 'counts')
+        cci_number = data.groupby([f'{key} is N/A', 'CCI']).size().reset_index(name = 'counts')
+        print(sex_number)
+        df = pd.concat([sex_number, cci_number], ignore_index= True, axis = 0)
+        df['SEX_TYPE'] = df['SEX_TYPE'].fillna(df['CCI'])
+        df.rename(columns={'SEX_TYPE': 'category'}, inplace=True)
+
+        sns.barplot(df, x = 'category', y = 'counts', hue = f'{key} is N/A')
+        plt.xticks(fontsize = 12)
+        plt.xlabel('')
+        plt.ylabel('Counrs', fontsize = 12)
+        plt.savefig(datapath / 'tmu' / f'{key}.svg', bbox_inches = 'tight')
+        plt.close('all')
+        # plt.show()
+        # breakpoint()
+
+def box_plot_tmu():
+    datapath = Path(r'C:\Users\Chi\Downloads')
+    data = pd.read_csv(datapath /'tmu_missing.csv')
+    key_list = ['WBC', 'HCT', 'BUN', 'Cr', 'GLUCOSE', 'Ca', 'AST', 'ALT', 'CRP', 'AMYLASE', 'LIPASE']
+    for key in key_list:
+        data[f'{key} is N/A'] = data[f'{key}'].isna()
+        new_df_1 = pd.DataFrame({
+        'value' : data['AGE'],
+        'attribute' : 'age'
+            })
+        df = pd.concat([new_df_1, data[f'{key} is N/A']], axis=1)
+        hue = f'{key} is N/A'
+        ax = sns.boxplot(data = df, x='attribute', y = 'value', hue = f'{key} is N/A')
+        plt.legend(loc = 2, title = f'{key} is N/A')
+        pairs = [('True', 'False')]
+        annotator = Annotator(ax, pairs, data = df, x='attribute', y='value', hue = hue)
+        annotator.configure(test='Mann-Whitney', text_format='star', loc='inside')
+        annotator.apply_and_annotate()
+        # plt.savefig(datapath / 'tmu' / f'{key}_age.svg', bbox_inches = 'tight')
+        # plt.close('all')
+        plt.show()
+        
+if __name__ =='__main__':
+    # bar_plot()
+    box_plot_tmu()

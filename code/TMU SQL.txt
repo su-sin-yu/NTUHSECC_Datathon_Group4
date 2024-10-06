@@ -1,0 +1,92 @@
+WITH diag_basic AS (
+    SELECT DISTINCT d."CHR_NO", d."HOSPIN_DATE", d."SDIAG_ORD", d."SDIAG_CODE",
+                    b."BIRTH_DATE", b."SEX_TYPE", b."FST_OPD_DATE", b."RECE_OPD_DATE",
+                    CAST((CAST(SUBSTRING(d."HOSPIN_DATE", 1, 3) AS INTEGER) + 1911) AS VARCHAR) || '-' ||
+                    SUBSTRING(d."HOSPIN_DATE", 4, 2) || '-' ||
+                    SUBSTRING(d."HOSPIN_DATE", 6, 2) AS "HOSPIN_DATE_NEW",
+                    TO_CHAR((CAST((CAST(SUBSTRING(d."HOSPIN_DATE", 1, 3) AS INTEGER) + 1911) AS VARCHAR) || '-' ||
+                    SUBSTRING(d."HOSPIN_DATE", 4, 2) || '-' ||
+                    SUBSTRING(d."HOSPIN_DATE", 6, 2))::DATE + INTERVAL '2 day', 'YYYY-MM-DD') AS "IN_2D"
+    FROM public.chr_diag d
+    INNER JOIN public.chr_basic b
+      ON d."CHR_NO" = b."CHR_NO"
+    WHERE d."SDIAG_CODE" LIKE 'K85%'
+),
+-- 第二個表：生命徵象資料，轉換為 short format
+vital_signs AS (
+    SELECT t."CHR_NO",
+           MAX(CASE WHEN t."ITEM_NO" = 'sp' THEN t."RECORD" END) AS "SPO2",
+           MAX(CASE WHEN t."ITEM_NO" = 'bf' THEN t."RECORD" END) AS "BLOOD_FLOW",
+           MAX(CASE WHEN t."ITEM_NO" = 'bt' THEN t."RECORD" END) AS "BODY_TEMP",
+           MAX(CASE WHEN t."ITEM_NO" = 'mp' THEN t."RECORD" END) AS "MEAN_PRESSURE"
+    FROM public.nis_tpr t
+    GROUP BY t."CHR_NO"
+),
+-- ICU 日期資料，提取 IPD_DATE, IPD_TIME, CPD_DATE, CPD_TIME 並創建 ICU_DATE
+icu_data AS (
+    SELECT i."CHR_NO",
+           i."IPD_DATE" AS "ICU_DATE",  -- ICU_DATE 等於 IPD_DATE
+           i."IPD_DATE",                -- 加入 IPD_DATE
+           i."IPD_TIME",                -- 加入 IPD_TIME
+           i."CPD_DATE",                -- 加入 CPD_DATE
+           i."CPD_TIME",                -- 加入 CPD_TIME
+           CASE
+               WHEN AGE(i."IPD_DATE"::DATE, d."HOSPIN_DATE"::DATE) > INTERVAL '2 days' THEN 1
+               ELSE 0
+           END AS "within_48_hours"     -- 計算 within_48_hours 欄位
+    FROM public.ipd_basic i
+    LEFT JOIN diag_basic d
+      ON i."CHR_NO" = d."CHR_NO"
+    WHERE i."GEN_DEPT_CODE" = '8601'    -- 過濾 ICU 病人
+)
+-- 結合所有資料，僅保留 within_48_hours 為 NULL 或 1 的行
+SELECT d."CHR_NO",
+       d."HOSPIN_DATE",
+       d."SDIAG_ORD",
+       d."SDIAG_CODE",
+       d."BIRTH_DATE",
+       d."SEX_TYPE",
+       d."FST_OPD_DATE",
+       d."RECE_OPD_DATE",
+       d."HOSPIN_DATE_NEW",
+       d."IN_2D",
+       -- 實驗室檢查項目
+       MAX(CASE WHEN l."R_ITEM" IN ('112J03', '50101', '051C01', '53101', '56201', '112101', '112201', '113401') THEN l."VALUE" END) AS "WBC",
+       MAX(CASE WHEN l."R_ITEM" IN ('50104', '051C04', '52601', '56204', '112104', '112204', '113301') THEN l."VALUE" END) AS "HCT",
+       MAX(CASE WHEN l."R_ITEM" IN ('10601', '11A101', '012D01', '01PD01') THEN l."VALUE" END) AS "BUN",
+       MAX(CASE WHEN l."R_ITEM" IN ('10801', '11A201', '011L01') THEN l."VALUE" END) AS "Cr",
+       MAX(CASE WHEN l."R_ITEM" IN ('12201', '12300', '12308') THEN l."VALUE" END) AS "LDH",
+       MAX(CASE WHEN l."R_ITEM" IN ('10101', '110201', '10201', '11A001', '07Z106', '112G06', '112I06', '01Z201', '11G501') THEN l."VALUE" END) AS "GLUCOSE",
+       MAX(CASE WHEN l."R_ITEM" = '11D501' THEN l."VALUE" END) AS "Ca",
+       MAX(CASE WHEN l."R_ITEM" IN ('11601', '11A301') THEN l."VALUE" END) AS "AST",
+       MAX(CASE WHEN l."R_ITEM" IN ('11701', '11A401') THEN l."VALUE" END) AS "ALT",
+       MAX(CASE WHEN l."R_ITEM" IN ('41801', '11B401', '56101') THEN l."VALUE" END) AS "CRP",
+       MAX(CASE WHEN l."R_ITEM" IN ('14101', '11A801') THEN l."VALUE" END) AS "AMYLASE",
+       MAX(CASE WHEN l."R_ITEM" = '11B501' THEN l."VALUE" END) AS "LIPASE",
+       MAX(CASE WHEN l."R_ITEM" IN ('60304', '60110') THEN l."VALUE" END) AS "HCO3",
+       -- 加入生命徵象資料
+       v."SPO2",
+       v."BLOOD_FLOW",
+       v."BODY_TEMP",
+       v."MEAN_PRESSURE",
+       -- 加入 ICU 日期資料和 within_48_hours 欄位
+       i."ICU_DATE",   -- ICU 日期 (等於 IPD_DATE)
+       i."IPD_DATE",   -- IPD 日期
+       i."IPD_TIME",   -- IPD 時間
+       i."CPD_DATE",   -- CPD 日期
+       i."CPD_TIME",   -- CPD 時間
+       i."within_48_hours"  -- within_48_hours 值
+FROM diag_basic d
+LEFT JOIN public.labresult l
+  ON d."CHR_NO" = l."CHR_NO"
+  AND CAST((CAST(SUBSTRING(l."B_DATE", 1, 3) AS INTEGER) + 1911) AS VARCHAR) || '-' ||
+      SUBSTRING(l."B_DATE", 4, 2) || '-' ||
+      SUBSTRING(l."B_DATE", 6, 2) BETWEEN d."HOSPIN_DATE_NEW" AND d."IN_2D"
+LEFT JOIN vital_signs v
+  ON d."CHR_NO" = v."CHR_NO"
+LEFT JOIN icu_data i
+  ON d."CHR_NO" = i."CHR_NO"
+WHERE i."within_48_hours" IS NULL OR i."within_48_hours" = 1  -- 只保留 NULL 或 1
+GROUP BY d."CHR_NO", d."HOSPIN_DATE", d."SDIAG_ORD", d."SDIAG_CODE", d."BIRTH_DATE", d."SEX_TYPE", d."FST_OPD_DATE", d."RECE_OPD_DATE", d."HOSPIN_DATE_NEW", d."IN_2D", 
+         v."SPO2", v."BLOOD_FLOW", v."BODY_TEMP", v."MEAN_PRESSURE", 
+         i."ICU_DATE", i."IPD_DATE", i."IPD_TIME", i."CPD_DATE", i."CPD_TIME", i."within_48_hours";
