@@ -1,0 +1,350 @@
+CREATE TABLE test3 AS
+WITH diagnosed_patients AS (
+    SELECT DISTINCT d.subject_id, d.hadm_id
+    FROM mimiciv_hosp.diagnoses_icd d
+    WHERE d.icd_code LIKE '5770%' OR d.icd_code ILIKE 'K85%'
+),
+first_icu_stay AS (
+    SELECT 
+        icu.subject_id,
+        icu.hadm_id,
+        icu.intime,
+        ROW_NUMBER() OVER (PARTITION BY icu.hadm_id ORDER BY icu.intime) AS icu_order
+    FROM mimiciv_icu.icustays icu
+    JOIN diagnosed_patients dp ON icu.hadm_id = dp.hadm_id
+),
+vital_stats AS (
+    SELECT 
+        ce.subject_id,
+        ce.hadm_id,
+        -- Heart Rate
+        MIN(CASE WHEN ce.itemid = 220045 THEN ce.valuenum END) AS heart_rate_min,
+        AVG(CASE WHEN ce.itemid = 220045 THEN ce.valuenum END) AS heart_rate_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid = 220045 THEN ce.valuenum END) AS heart_rate_median,
+        MAX(CASE WHEN ce.itemid = 220045 THEN ce.valuenum END) AS heart_rate_max,
+        -- Systolic Blood Pressure
+        MIN(CASE WHEN ce.itemid = 220050 THEN ce.valuenum END) AS sbp_min,
+        AVG(CASE WHEN ce.itemid = 220050 THEN ce.valuenum END) AS sbp_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid = 220050 THEN ce.valuenum END) AS sbp_median,
+        MAX(CASE WHEN ce.itemid = 220050 THEN ce.valuenum END) AS sbp_max,
+        -- Diastolic Blood Pressure
+        MIN(CASE WHEN ce.itemid = 220051 THEN ce.valuenum END) AS dbp_min,
+        AVG(CASE WHEN ce.itemid = 220051 THEN ce.valuenum END) AS dbp_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid = 220051 THEN ce.valuenum END) AS dbp_median,
+        MAX(CASE WHEN ce.itemid = 220051 THEN ce.valuenum END) AS dbp_max,
+        -- Respiratory Rate
+        MIN(CASE WHEN ce.itemid = 220210 THEN ce.valuenum END) AS resp_rate_min,
+        AVG(CASE WHEN ce.itemid = 220210 THEN ce.valuenum END) AS resp_rate_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid = 220210 THEN ce.valuenum END) AS resp_rate_median,
+        MAX(CASE WHEN ce.itemid = 220210 THEN ce.valuenum END) AS resp_rate_max,
+        -- Temperature
+        MIN(CASE WHEN ce.itemid IN (223761, 223762) THEN ce.valuenum END) AS temp_min,
+        AVG(CASE WHEN ce.itemid IN (223761, 223762) THEN ce.valuenum END) AS temp_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid IN (223761, 223762) THEN ce.valuenum END) AS temp_median,
+        MAX(CASE WHEN ce.itemid IN (223761, 223762) THEN ce.valuenum END) AS temp_max,
+        -- SpO2
+        MIN(CASE WHEN ce.itemid = 220277 THEN ce.valuenum END) AS spo2_min,
+        AVG(CASE WHEN ce.itemid = 220277 THEN ce.valuenum END) AS spo2_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN ce.itemid = 220277 THEN ce.valuenum END) AS spo2_median,
+        MAX(CASE WHEN ce.itemid = 220277 THEN ce.valuenum END) AS spo2_max
+    FROM mimiciv_icu.chartevents ce
+    JOIN diagnosed_patients dp ON ce.subject_id = dp.subject_id AND ce.hadm_id = dp.hadm_id
+    JOIN mimiciv_hosp.admissions adm ON ce.hadm_id = adm.hadm_id
+    WHERE ce.itemid IN (220045, 220050, 220051, 220210, 223761, 223762, 220277)
+        AND ce.charttime BETWEEN adm.admittime AND adm.admittime + INTERVAL '24 hours'-- Only include data before ICU
+    GROUP BY ce.subject_id, ce.hadm_id
+),
+charlson AS (
+    SELECT 
+        hadm_id,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('I21','I22') OR
+            SUBSTR(icd_code, 1, 4) IN ('I252')
+            THEN 1 ELSE 0 END) AS myocardial_infarct,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('I50') OR
+            SUBSTR(icd_code, 1, 4) IN ('I110','I130','I132','I255','I420','I425','I426','I427','I428','I429')
+            THEN 1 ELSE 0 END) AS congestive_heart_failure,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('I70','I71') OR
+            SUBSTR(icd_code, 1, 4) IN ('I731','I738','I739','I771','I790','I792','K551','K558','K559','Z958','Z959')
+            THEN 1 ELSE 0 END) AS peripheral_vascular_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) BETWEEN 'I60' AND 'I69' OR
+            SUBSTR(icd_code, 1, 3) IN ('G45','G46') OR
+            SUBSTR(icd_code, 1, 4) = 'H340'
+            THEN 1 ELSE 0 END) AS cerebrovascular_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('F00','F01','F02','F03','G30') OR
+            SUBSTR(icd_code, 1, 4) IN ('F051','G311')
+            THEN 1 ELSE 0 END) AS dementia,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) BETWEEN 'J40' AND 'J47' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'J60' AND 'J67' OR
+            SUBSTR(icd_code, 1, 4) IN ('I278','I279','J684','J701','J703')
+            THEN 1 ELSE 0 END) AS chronic_pulmonary_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('M05','M06','M32','M33','M34') OR
+            SUBSTR(icd_code, 1, 4) IN ('M315','M351','M353','M360')
+            THEN 1 ELSE 0 END) AS rheumatic_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('K25','K26','K27','K28')
+            THEN 1 ELSE 0 END) AS peptic_ulcer_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('B18','K73','K74') OR
+            SUBSTR(icd_code, 1, 4) IN ('K700','K701','K702','K703','K709','K713','K714','K715','K717','K760','K762','K763','K764','K768','K769','Z944')
+            THEN 1 ELSE 0 END) AS mild_liver_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 4) IN ('E100','E101','E106','E108','E109','E110','E111','E116','E118','E119','E120','E121','E126','E128','E129','E130','E131','E136','E138','E139','E140','E141','E146','E148','E149')
+            THEN 1 ELSE 0 END) AS diabetes_without_cc,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 4) IN ('E102','E103','E104','E105','E107','E112','E113','E114','E115','E117','E122','E123','E124','E125','E127','E132','E133','E134','E135','E137','E142','E143','E144','E145','E147')
+            THEN 1 ELSE 0 END) AS diabetes_with_cc,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('G81','G82') OR
+            SUBSTR(icd_code, 1, 4) IN ('G041','G114','G801','G802','G830','G831','G832','G833','G834','G839')
+            THEN 1 ELSE 0 END) AS paraplegia,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('N18','N19') OR
+            SUBSTR(icd_code, 1, 4) IN ('I120','I131','N032','N033','N034','N035','N036','N037','N052','N053','N054','N055','N056','N057','N250','Z490','Z491','Z492','Z940','Z992')
+            THEN 1 ELSE 0 END) AS renal_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C00' AND 'C26' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C30' AND 'C34' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C37' AND 'C41' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C43' AND 'C45' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C47' AND 'C58' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C60' AND 'C76' OR
+            SUBSTR(icd_code, 1, 3) BETWEEN 'C81' AND 'C85' OR
+            SUBSTR(icd_code, 1, 3) IN ('C88','C90','C91','C92','C93','C94','C95','C96','C97')
+            THEN 1 ELSE 0 END) AS malignant_cancer,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 4) IN ('I850','I859','I864','I982','K704','K711','K721','K729','K765','K766','K767')
+            THEN 1 ELSE 0 END) AS severe_liver_disease,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('C77','C78','C79','C80')
+            THEN 1 ELSE 0 END) AS metastatic_solid_tumor,
+        MAX(CASE WHEN 
+            SUBSTR(icd_code, 1, 3) IN ('B20','B21','B22','B24')
+            THEN 1 ELSE 0 END) AS aids
+    FROM mimiciv_hosp.diagnoses_icd
+    WHERE hadm_id IN (SELECT hadm_id FROM diagnosed_patients)
+    GROUP BY hadm_id
+),
+lab_tests AS (
+    SELECT 
+        lab.subject_id,
+        lab.hadm_id,
+        -- WBC
+        MIN(CASE WHEN lab.itemid = 51300 THEN lab.valuenum END) AS wbc_min,
+        AVG(CASE WHEN lab.itemid = 51300 THEN lab.valuenum END) AS wbc_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51300 THEN lab.valuenum END) AS wbc_median,
+        MAX(CASE WHEN lab.itemid = 51300 THEN lab.valuenum END) AS wbc_max,
+        -- Hematocrit
+        MIN(CASE WHEN lab.itemid = 51221 THEN lab.valuenum END) AS hematocrit_min,
+        AVG(CASE WHEN lab.itemid = 51221 THEN lab.valuenum END) AS hematocrit_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51221 THEN lab.valuenum END) AS hematocrit_median,
+        MAX(CASE WHEN lab.itemid = 51221 THEN lab.valuenum END) AS hematocrit_max,
+        -- Hemoglobin
+        MIN(CASE WHEN lab.itemid = 51222 THEN lab.valuenum END) AS hemoglobin_min,
+        AVG(CASE WHEN lab.itemid = 51222 THEN lab.valuenum END) AS hemoglobin_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51222 THEN lab.valuenum END) AS hemoglobin_median,
+        MAX(CASE WHEN lab.itemid = 51222 THEN lab.valuenum END) AS hemoglobin_max,
+        -- Platelet Count
+        MIN(CASE WHEN lab.itemid = 51265 THEN lab.valuenum END) AS platelet_min,
+        AVG(CASE WHEN lab.itemid = 51265 THEN lab.valuenum END) AS platelet_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51265 THEN lab.valuenum END) AS platelet_median,
+        MAX(CASE WHEN lab.itemid = 51265 THEN lab.valuenum END) AS platelet_max,
+        -- BUN
+        MIN(CASE WHEN lab.itemid = 51006 THEN lab.valuenum END) AS bun_min,
+        AVG(CASE WHEN lab.itemid = 51006 THEN lab.valuenum END) AS bun_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51006 THEN lab.valuenum END) AS bun_median,
+        MAX(CASE WHEN lab.itemid = 51006 THEN lab.valuenum END) AS bun_max,
+        -- Creatinine
+        MIN(CASE WHEN lab.itemid = 50912 THEN lab.valuenum END) AS creatinine_min,
+        AVG(CASE WHEN lab.itemid = 50912 THEN lab.valuenum END) AS creatinine_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50912 THEN lab.valuenum END) AS creatinine_median,
+        MAX(CASE WHEN lab.itemid = 50912 THEN lab.valuenum END) AS creatinine_max,
+        -- Glucose
+        MIN(CASE WHEN lab.itemid = 50931 THEN lab.valuenum END) AS glucose_min,
+        AVG(CASE WHEN lab.itemid = 50931 THEN lab.valuenum END) AS glucose_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50931 THEN lab.valuenum END) AS glucose_median,
+        MAX(CASE WHEN lab.itemid = 50931 THEN lab.valuenum END) AS glucose_max,
+        -- Calcium
+        MIN(CASE WHEN lab.itemid = 50893 THEN lab.valuenum END) AS calcium_min,
+        AVG(CASE WHEN lab.itemid = 50893 THEN lab.valuenum END) AS calcium_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50893 THEN lab.valuenum END) AS calcium_median,
+        MAX(CASE WHEN lab.itemid = 50893 THEN lab.valuenum END) AS calcium_max,
+        -- Sodium
+        MIN(CASE WHEN lab.itemid = 50983 THEN lab.valuenum END) AS sodium_min,
+        AVG(CASE WHEN lab.itemid = 50983 THEN lab.valuenum END) AS sodium_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50983 THEN lab.valuenum END) AS sodium_median,
+        MAX(CASE WHEN lab.itemid = 50983 THEN lab.valuenum END) AS sodium_max,
+        -- Potassium
+        MIN(CASE WHEN lab.itemid = 50971 THEN lab.valuenum END) AS potassium_min,
+        AVG(CASE WHEN lab.itemid = 50971 THEN lab.valuenum END) AS potassium_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50971 THEN lab.valuenum END) AS potassium_median,
+        MAX(CASE WHEN lab.itemid = 50971 THEN lab.valuenum END) AS potassium_max,
+        -- Chloride
+        MIN(CASE WHEN lab.itemid = 50902 THEN lab.valuenum END) AS chloride_min,
+        AVG(CASE WHEN lab.itemid = 50902 THEN lab.valuenum END) AS chloride_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50902 THEN lab.valuenum END) AS chloride_median,
+        MAX(CASE WHEN lab.itemid = 50902 THEN lab.valuenum END) AS chloride_max,
+        -- Bicarbonate
+        MIN(CASE WHEN lab.itemid = 50882 THEN lab.valuenum END) AS bicarbonate_min,
+        AVG(CASE WHEN lab.itemid = 50882 THEN lab.valuenum END) AS bicarbonate_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50882 THEN lab.valuenum END) AS bicarbonate_median,
+        MAX(CASE WHEN lab.itemid = 50882 THEN lab.valuenum END) AS bicarbonate_max,
+        -- Lactate
+        MIN(CASE WHEN lab.itemid = 50813 THEN lab.valuenum END) AS lactate_min,
+        AVG(CASE WHEN lab.itemid = 50813 THEN lab.valuenum END) AS lactate_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50813 THEN lab.valuenum END) AS lactate_median,
+        MAX(CASE WHEN lab.itemid = 50813 THEN lab.valuenum END) AS lactate_max,
+        -- AST (SGOT)
+        MIN(CASE WHEN lab.itemid = 50810 THEN lab.valuenum END) AS ast_min,
+        AVG(CASE WHEN lab.itemid = 50810 THEN lab.valuenum END) AS ast_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50810 THEN lab.valuenum END) AS ast_median,
+        MAX(CASE WHEN lab.itemid = 50810 THEN lab.valuenum END) AS ast_max,
+        -- ALT (SGPT)
+        MIN(CASE WHEN lab.itemid = 50861 THEN lab.valuenum END) AS alt_min,
+        AVG(CASE WHEN lab.itemid = 50861 THEN lab.valuenum END) AS alt_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50861 THEN lab.valuenum END) AS alt_median,
+        MAX(CASE WHEN lab.itemid = 50861 THEN lab.valuenum END) AS alt_max,
+        -- Alkaline Phosphatase
+        MIN(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS alp_min,
+        AVG(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS alp_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS alp_median,
+        MAX(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS alp_max,
+        -- Total Bilirubin
+        MIN(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS bilirubin_total_min,
+        AVG(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS bilirubin_total_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS bilirubin_total_median,
+        MAX(CASE WHEN lab.itemid = 50885 THEN lab.valuenum END) AS bilirubin_total_max,
+        -- Amylase
+        MIN(CASE WHEN lab.itemid = 50949 THEN lab.valuenum END) AS amylase_min,
+        AVG(CASE WHEN lab.itemid = 50949 THEN lab.valuenum END) AS amylase_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50949 THEN lab.valuenum END) AS amylase_median,
+        MAX(CASE WHEN lab.itemid = 50949 THEN lab.valuenum END) AS amylase_max,
+        -- Lipase
+        MIN(CASE WHEN lab.itemid = 50956 THEN lab.valuenum END) AS lipase_min,
+        AVG(CASE WHEN lab.itemid = 50956 THEN lab.valuenum END) AS lipase_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50956 THEN lab.valuenum END) AS lipase_median,
+        MAX(CASE WHEN lab.itemid = 50956 THEN lab.valuenum END) AS lipase_max,
+        -- C-Reactive Protein
+        MIN(CASE WHEN lab.itemid = 51025 THEN lab.valuenum END) AS crp_min,
+        AVG(CASE WHEN lab.itemid = 51025 THEN lab.valuenum END) AS crp_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51025 THEN lab.valuenum END) AS crp_median,
+        MAX(CASE WHEN lab.itemid = 51025 THEN lab.valuenum END) AS crp_max,
+        -- Prothrombin Time (PT)
+        MIN(CASE WHEN lab.itemid = 51275 THEN lab.valuenum END) AS pt_min,
+        AVG(CASE WHEN lab.itemid = 51275 THEN lab.valuenum END) AS pt_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51275 THEN lab.valuenum END) AS pt_median,
+        MAX(CASE WHEN lab.itemid = 51275 THEN lab.valuenum END) AS pt_max,
+        -- INR
+        MIN(CASE WHEN lab.itemid = 51237 THEN lab.valuenum END) AS inr_min,
+        AVG(CASE WHEN lab.itemid = 51237 THEN lab.valuenum END) AS inr_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 51237 THEN lab.valuenum END) AS inr_median,
+        MAX(CASE WHEN lab.itemid = 51237 THEN lab.valuenum END) AS inr_max,
+        -- LDH
+        MIN(CASE WHEN lab.itemid = 50809 THEN lab.valuenum END) AS ldh_min,
+        AVG(CASE WHEN lab.itemid = 50809 THEN lab.valuenum END) AS ldh_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50809 THEN lab.valuenum END) AS ldh_median,
+        MAX(CASE WHEN lab.itemid = 50809 THEN lab.valuenum END) AS ldh_max,
+        -- Albumin
+        MIN(CASE WHEN lab.itemid = 50862 THEN lab.valuenum END) AS albumin_min,
+        AVG(CASE WHEN lab.itemid = 50862 THEN lab.valuenum END) AS albumin_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50862 THEN lab.valuenum END) AS albumin_median,
+        MAX(CASE WHEN lab.itemid = 50862 THEN lab.valuenum END) AS albumin_max,
+        -- PaO2
+        MIN(CASE WHEN lab.itemid = 50821 THEN lab.valuenum END) AS pao2_min,
+        AVG(CASE WHEN lab.itemid = 50821 THEN lab.valuenum END) AS pao2_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50821 THEN lab.valuenum END) AS pao2_median,
+        MAX(CASE WHEN lab.itemid = 50821 THEN lab.valuenum END) AS pao2_max,
+        -- Base Excess
+        MIN(CASE WHEN lab.itemid = 50804 THEN lab.valuenum END) AS base_excess_min,
+        AVG(CASE WHEN lab.itemid = 50804 THEN lab.valuenum END) AS base_excess_mean,
+				PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50804 THEN lab.valuenum END) AS base_excess_median,
+        MAX(CASE WHEN lab.itemid = 50804 THEN lab.valuenum END) AS base_excess_max,
+        -- Magnesium
+        MIN(CASE WHEN lab.itemid = 50960 THEN lab.valuenum END) AS magnesium_min,
+        AVG(CASE WHEN lab.itemid = 50960 THEN lab.valuenum END) AS magnesium_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50960 THEN lab.valuenum END) AS magnesium_median,
+        MAX(CASE WHEN lab.itemid = 50960 THEN lab.valuenum END) AS magnesium_max,
+        -- Phosphate
+        MIN(CASE WHEN lab.itemid = 50970 THEN lab.valuenum END) AS phosphate_min,
+        AVG(CASE WHEN lab.itemid = 50970 THEN lab.valuenum END) AS phosphate_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY CASE WHEN lab.itemid = 50970 THEN lab.valuenum END) AS phosphate_median,
+        MAX(CASE WHEN lab.itemid = 50970 THEN lab.valuenum END) AS phosphate_max
+    FROM 
+        mimiciv_hosp.labevents lab
+    JOIN 
+        diagnosed_patients dp ON lab.subject_id = dp.subject_id AND lab.hadm_id = dp.hadm_id
+    JOIN 
+        mimiciv_hosp.admissions adm ON lab.hadm_id = adm.hadm_id
+    WHERE 
+        lab.itemid IN (51300, 51221, 51222, 51265, 51006, 50912, 50931, 50893, 50983, 50971, 50902, 50882, 50813, 50810, 50861, 50885, 50949, 50956, 51025, 51275, 51237, 50809, 50862, 50821, 50804, 50960, 50970)
+        AND lab.charttime BETWEEN adm.admittime AND adm.admittime + INTERVAL '24 hours'
+    GROUP BY 
+        lab.subject_id, lab.hadm_id
+)
+SELECT 
+    dp.subject_id,
+    dp.hadm_id,
+    adm.admittime,
+    fis.intime AS icu_intime,
+    CASE 
+        WHEN fis.intime IS NOT NULL THEN EXTRACT(EPOCH FROM (fis.intime - adm.admittime))/3600.0 
+        ELSE NULL 
+    END AS hours_to_icu,
+    CASE 
+        WHEN fis.intime IS NOT NULL AND EXTRACT(EPOCH FROM (fis.intime - adm.admittime))/3600.0 < 48 THEN 1
+        ELSE 0
+    END AS within_48_hours,
+    CASE 
+        WHEN fis.intime IS NOT NULL AND EXTRACT(EPOCH FROM (fis.intime - adm.admittime))/3600.0 < 24 THEN 1
+        ELSE 0
+    END AS within_24_hours,
+    -- Demographic data
+    p.gender,
+    p.anchor_age + EXTRACT(YEAR FROM age(adm.admittime, make_date(p.anchor_year, 1, 1))) AS age,
+    adm.race,
+    adm.language,
+    adm.marital_status,
+    adm.insurance,
+    -- Charlson Comorbidity Score
+    (
+        c.myocardial_infarct + c.congestive_heart_failure + c.peripheral_vascular_disease +
+        c.cerebrovascular_disease + c.dementia + c.chronic_pulmonary_disease +
+        c.rheumatic_disease + c.peptic_ulcer_disease +
+        GREATEST(c.mild_liver_disease, 3*c.severe_liver_disease) +
+        GREATEST(c.diabetes_without_cc, 2*c.diabetes_with_cc) +
+        2*c.paraplegia + 2*c.renal_disease +
+        GREATEST(2*c.malignant_cancer, 6*c.metastatic_solid_tumor) +
+        6*c.aids
+    ) AS charlson_comorbidity_score,
+    -- Laboratory Tests (excluding subject_id and hadm_id which are already selected)
+    lt.wbc_min, lt.wbc_mean, lt.wbc_median, lt.wbc_max,
+    -- 其他实验室检查项目保持不变
+    -- Vital Signs
+    vs.heart_rate_min, vs.heart_rate_mean, vs.heart_rate_median, vs.heart_rate_max,
+    vs.sbp_min, vs.sbp_mean, vs.sbp_median, vs.sbp_max,
+    vs.dbp_min, vs.dbp_mean, vs.dbp_median, vs.dbp_max,
+    vs.resp_rate_min, vs.resp_rate_mean, vs.resp_rate_median, vs.resp_rate_max,
+    vs.temp_min, vs.temp_mean, vs.temp_median, vs.temp_max,
+    vs.spo2_min, vs.spo2_mean, vs.spo2_median, vs.spo2_max
+FROM 
+    diagnosed_patients dp
+JOIN 
+    mimiciv_hosp.admissions adm ON dp.hadm_id = adm.hadm_id
+LEFT JOIN
+    first_icu_stay fis ON dp.hadm_id = fis.hadm_id AND fis.icu_order = 1
+LEFT JOIN
+    mimiciv_hosp.patients p ON dp.subject_id = p.subject_id
+LEFT JOIN
+    lab_tests lt ON dp.subject_id = lt.subject_id AND dp.hadm_id = lt.hadm_id
+LEFT JOIN
+    vital_stats vs ON dp.subject_id = vs.subject_id AND dp.hadm_id = vs.hadm_id
+LEFT JOIN
+    charlson c ON dp.hadm_id = c.hadm_id
+ORDER BY 
+    dp.subject_id, dp.hadm_id;
